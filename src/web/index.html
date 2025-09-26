@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ambient Email Agent - HITL Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="header-content">
+                <h1><i class="fas fa-robot"></i> Ambient Email Agent</h1>
+                <p class="subtitle">Human-in-the-Loop Email Management</p>
+            </div>
+            <div class="header-actions">
+                <button id="refresh" class="btn btn-primary">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+                <button id="demo" class="btn btn-secondary">
+                    <i class="fas fa-paper-plane"></i> Send Demo
+                </button>
+                <button id="settings" class="btn btn-outline">
+                    <i class="fas fa-cog"></i> Settings
+                </button>
+            </div>
+        </header>
+
+        <main class="main">
+            <div class="stats-bar">
+                <div class="stat-item">
+                    <span class="stat-label">Pending</span>
+                    <span class="stat-value" id="pending-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">VIP</span>
+                    <span class="stat-value" id="vip-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Processed</span>
+                    <span class="stat-value" id="processed-count">0</span>
+                </div>
+            </div>
+
+            <div class="filters">
+                <div class="filter-group">
+                    <label for="priority-filter">Priority:</label>
+                    <select id="priority-filter">
+                        <option value="all">All</option>
+                        <option value="high">High (VIP)</option>
+                        <option value="normal">Normal</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="status-filter">Status:</label>
+                    <select id="status-filter">
+                        <option value="all">All</option>
+                        <option value="needs_reply">Needs Reply</option>
+                        <option value="schedule">Schedule</option>
+                        <option value="fyi">FYI</option>
+                        <option value="spam">Spam</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="list" class="email-list"></div>
+            
+            <div id="empty-state" class="empty-state" style="display: none;">
+                <i class="fas fa-inbox"></i>
+                <h3>No pending emails</h3>
+                <p>All caught up! New emails will appear here when they need your attention.</p>
+            </div>
+        </main>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label for="hitl-secret">HITL Secret:</label>
+                    <input type="password" id="hitl-secret" placeholder="Enter your HITL secret">
+                </div>
+                <div class="setting-group">
+                    <label for="auto-refresh">Auto Refresh (seconds):</label>
+                    <input type="number" id="auto-refresh" value="30" min="5" max="300">
+                </div>
+                <div class="setting-group">
+                    <label for="theme">Theme:</label>
+                    <select id="theme">
+                        <option value="dark">Dark</option>
+                        <option value="light">Light</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="save-settings" class="btn btn-primary">Save Settings</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let autoRefreshInterval;
+        let currentEmails = [];
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadSettings();
+            load();
+            setupEventListeners();
+            startAutoRefresh();
+        });
+
+        function setupEventListeners() {
+            document.getElementById('refresh').onclick = load;
+            document.getElementById('demo').onclick = sendDemo;
+            document.getElementById('settings').onclick = openSettings;
+            document.getElementById('save-settings').onclick = saveSettings;
+            document.querySelector('.close-btn').onclick = closeSettings;
+            document.getElementById('priority-filter').onchange = filterEmails;
+            document.getElementById('status-filter').onchange = filterEmails;
+        }
+
+        function loadSettings() {
+            const secret = localStorage.getItem('hitl-secret') || 'change-me';
+            const autoRefresh = localStorage.getItem('auto-refresh') || '30';
+            const theme = localStorage.getItem('theme') || 'dark';
+            
+            document.getElementById('hitl-secret').value = secret;
+            document.getElementById('auto-refresh').value = autoRefresh;
+            document.getElementById('theme').value = theme;
+            
+            document.body.className = theme;
+        }
+
+        function saveSettings() {
+            const secret = document.getElementById('hitl-secret').value;
+            const autoRefresh = document.getElementById('auto-refresh').value;
+            const theme = document.getElementById('theme').value;
+            
+            localStorage.setItem('hitl-secret', secret);
+            localStorage.setItem('auto-refresh', autoRefresh);
+            localStorage.setItem('theme', theme);
+            
+            document.body.className = theme;
+            startAutoRefresh();
+            closeSettings();
+        }
+
+        function startAutoRefresh() {
+            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
+            const interval = parseInt(document.getElementById('auto-refresh').value) * 1000;
+            autoRefreshInterval = setInterval(load, interval);
+        }
+
+        function openSettings() {
+            document.getElementById('settings-modal').style.display = 'flex';
+        }
+
+        function closeSettings() {
+            document.getElementById('settings-modal').style.display = 'none';
+        }
+
+        async function load() {
+            try {
+                const res = await fetch('/pending');
+                const data = await res.json();
+                currentEmails = data;
+                renderEmails(data);
+                updateStats(data);
+            } catch (error) {
+                console.error('Error loading emails:', error);
+                showNotification('Error loading emails', 'error');
+            }
+        }
+
+        function renderEmails(emails) {
+            const root = document.getElementById('list');
+            const emptyState = document.getElementById('empty-state');
+            
+            if (emails.length === 0) {
+                root.innerHTML = '';
+                emptyState.style.display = 'block';
+                return;
+            }
+            
+            emptyState.style.display = 'none';
+            root.innerHTML = '';
+            
+            emails
+              .filter(item => {
+                // Normalize status select to machine label
+                const raw = (document.getElementById('status-filter').value || '').toLowerCase();
+                const statusMap = {
+                  'all': 'all',
+                  'needs reply': 'needs_reply',
+                  'needs_reply': 'needs_reply',
+                  'schedule': 'schedule',
+                  'fyi': 'fyi',
+                  'spam': 'spam'
+                };
+                const status = statusMap[raw] || 'all';
+                if (status === 'all') return true;
+                const t = (item.triage || (item.payload && item.payload.triage) || '').toLowerCase();
+                return t === status;
+              })
+              .forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'email-card';
+                
+                const p = item.payload.proposal || {};
+                const isVip = item.payload.is_vip || false;
+                const priority = item.payload.priority || 1;
+                
+                div.innerHTML = `
+                    <div class="email-header">
+                        <div class="email-meta">
+                            <h3 class="email-subject">${p.subject || '(no subject)'}</h3>
+                            <div class="email-info">
+                                <span class="email-to"><i class="fas fa-envelope"></i> ${p.to || ''}</span>
+                                ${isVip ? '<span class="vip-badge"><i class="fas fa-star"></i> VIP</span>' : ''}
+                                ${priority > 1 ? '<span class="priority-badge high">High Priority</span>' : ''}
+                            </div>
+                        </div>
+                        <div class="email-actions">
+                            <button class="btn btn-success btn-sm approve">
+                                <i class="fas fa-check"></i> Approve
+                            </button>
+                            <button class="btn btn-warning btn-sm edit">
+                                <i class="fas fa-edit"></i> Edit
+                            </button>
+                            <button class="btn btn-danger btn-sm deny">
+                                <i class="fas fa-times"></i> Deny
+                            </button>
+                        </div>
+                    </div>
+                    <div class="email-body">
+                        <pre>${(p.body || '').replace(/[<]/g,'&lt;')}</pre>
+                    </div>
+                    <div class="email-footer">
+                        <small>Thread ID: ${item.thread_id}</small>
+                        <small>Original: ${p.original_sender || 'Unknown'}</small>
+                    </div>
+                `;
+                
+                div.querySelector('.approve').onclick = () => decide(item.thread_id, true, {});
+                div.querySelector('.deny').onclick = () => decide(item.thread_id, false, {});
+                div.querySelector('.edit').onclick = () => editEmail(item.thread_id, p);
+                
+                root.appendChild(div);
+            });
+        }
+
+        function updateStats(emails) {
+            const vipCount = emails.filter(e => e.payload.is_vip).length;
+            document.getElementById('pending-count').textContent = emails.length;
+            document.getElementById('vip-count').textContent = vipCount;
+            document.getElementById('processed-count').textContent = 'N/A'; // Could be enhanced with API
+        }
+
+        function filterEmails() {
+            const priorityFilter = document.getElementById('priority-filter').value;
+            const statusFilter = document.getElementById('status-filter').value;
+            
+            let filtered = currentEmails;
+            
+            if (priorityFilter === 'high') {
+                filtered = filtered.filter(e => e.payload.is_vip || e.payload.priority > 1);
+            } else if (priorityFilter === 'normal') {
+                filtered = filtered.filter(e => !e.payload.is_vip && e.payload.priority <= 1);
+            }
+            
+            // Note: Status filtering would need additional data from the API
+            renderEmails(filtered);
+        }
+
+        function editEmail(threadId, proposal) {
+            const to = prompt("Edit To:", proposal.to || "");
+            const subject = prompt("Edit Subject:", proposal.subject || "");
+            const body = prompt("Edit Body:", proposal.body || "");
+            
+            if (to !== null && subject !== null && body !== null) {
+                decide(threadId, true, {to, subject, body});
+            }
+        }
+
+        async function decide(threadId, approved, edits) {
+            try {
+                const secret = localStorage.getItem('hitl-secret') || 'change-me';
+                const response = await fetch('/approve', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-hitl-secret': secret
+                    },
+                    body: JSON.stringify({thread_id: threadId, approved, edits})
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'SENT') {
+                    showNotification('Email sent successfully!', 'success');
+                } else if (result.status === 'DENIED') {
+                    showNotification('Email action denied', 'info');
+                } else if (result.status === 'ERROR') {
+                    showNotification('Error: ' + result.message, 'error');
+                }
+                
+                load(); // Refresh the list
+            } catch (error) {
+                console.error('Error making decision:', error);
+                showNotification('Error processing request', 'error');
+            }
+        }
+
+        async function sendDemo() {
+            const subject = prompt("Subject:", "Meet next Tue?");
+            const body = prompt("Body:", "Can we meet next Tuesday morning?");
+            
+            if (subject && body) {
+                try {
+                    const response = await fetch('/run-email', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            user_id: "u_local",
+                            email_id: Date.now().toString(),
+                            email_subject: subject,
+                            email_body: body,
+                            email_sender: "demo@example.com",
+                            email_recipient: "you@example.com"
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    console.log('Demo result:', result);
+                    load(); // Refresh to show the new email
+                } catch (error) {
+                    console.error('Demo error:', error);
+                    showNotification('Error sending demo', 'error');
+                }
+            }
+        }
+
+        function showNotification(message, type = 'info') {
+            // Simple notification system
+            const notification = document.createElement('div');
+            notification.className = `notification notification-${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
