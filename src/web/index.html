@@ -195,8 +195,8 @@
             
             emails
               .filter(item => {
-                // Normalize status select to machine label
-                const raw = (document.getElementById('status-filter').value || '').toLowerCase();
+                // Normalize selected filters
+                const rawStatus = (document.getElementById('status-filter').value || '').toLowerCase();
                 const statusMap = {
                   'all': 'all',
                   'needs reply': 'needs_reply',
@@ -205,18 +205,30 @@
                   'fyi': 'fyi',
                   'spam': 'spam'
                 };
-                const status = statusMap[raw] || 'all';
-                if (status === 'all') return true;
-                const t = (item.triage || (item.payload && item.payload.triage) || '').toLowerCase();
-                return t === status;
+                const status = statusMap[rawStatus] || 'all';
+                const prioritySel = (document.getElementById('priority-filter').value || 'all').toLowerCase();
+
+                // Item metadata surfaced by backend
+                const triage = (item.triage || '').toLowerCase();
+                const isVip = !!item.is_vip;
+                const priority = item.priority || (isVip ? 2 : 1);
+
+                const statusOk = status === 'all' ? true : triage === status;
+                const priorityOk = (
+                  prioritySel === 'all' ||
+                  (prioritySel === 'high' && (isVip || priority > 1)) ||
+                  (prioritySel === 'normal' && (!isVip && priority <= 1))
+                );
+
+                return statusOk && priorityOk;
               })
               .forEach(item => {
                 const div = document.createElement('div');
                 div.className = 'email-card';
                 
                 const p = item.payload.proposal || {};
-                const isVip = item.payload.is_vip || false;
-                const priority = item.payload.priority || 1;
+                const isVip = !!item.is_vip;
+                const priority = item.priority || (isVip ? 2 : 1);
                 
                 div.innerHTML = `
                     <div class="email-header">
@@ -258,26 +270,15 @@
         }
 
         function updateStats(emails) {
-            const vipCount = emails.filter(e => e.payload.is_vip).length;
+            const vipCount = emails.filter(e => e.is_vip).length;
             document.getElementById('pending-count').textContent = emails.length;
             document.getElementById('vip-count').textContent = vipCount;
             document.getElementById('processed-count').textContent = 'N/A'; // Could be enhanced with API
         }
 
         function filterEmails() {
-            const priorityFilter = document.getElementById('priority-filter').value;
-            const statusFilter = document.getElementById('status-filter').value;
-            
-            let filtered = currentEmails;
-            
-            if (priorityFilter === 'high') {
-                filtered = filtered.filter(e => e.payload.is_vip || e.payload.priority > 1);
-            } else if (priorityFilter === 'normal') {
-                filtered = filtered.filter(e => !e.payload.is_vip && e.payload.priority <= 1);
-            }
-            
-            // Note: Status filtering would need additional data from the API
-            renderEmails(filtered);
+            // Re-render with current select values; renderEmails handles both filters
+            renderEmails(currentEmails);
         }
 
         function editEmail(threadId, proposal) {

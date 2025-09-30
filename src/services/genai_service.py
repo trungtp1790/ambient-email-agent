@@ -1,5 +1,6 @@
 from google import genai
 import os
+import json
 import logging
 from typing import List
 
@@ -7,7 +8,7 @@ from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MODEL = "gemini-2.0-flash-exp"  # Updated to latest model
+MODEL = "gemini-2.5-flash"  # Updated to latest model
 
 _client = None
 def get_client():
@@ -35,22 +36,51 @@ Subject: {subject}
 From: {sender}
 Body: {body[:500]}...
 
-Return ONLY the category name (needs_reply, schedule, fyi, or spam).
+Return ONLY a JSON object with the email_type field:
+{{
+  "email_type": "needs_reply|schedule|fyi|spam"
+}}
 """.strip()
         
         resp = get_client().models.generate_content(model=MODEL, contents=prompt)
-        label = (resp.text or "").strip().lower()
+        response_text = (resp.text or "").strip()
         
-        # Validate response
-        valid_labels = {"needs_reply", "schedule", "fyi", "spam"}
-        if label in valid_labels:
-            logger.info("Email classified as: %s", label)
-            return label
-        else:
-            logger.warning("Invalid classification '%s', defaulting to 'fyi'", label)
-            return "fyi"
+        # Parse JSON response - handle markdown code blocks
+        try:
+            # Remove markdown code block markers if present
+            cleaned_response = response_text.strip()
+            if cleaned_response.startswith("```json"):
+                cleaned_response = cleaned_response[7:]  # Remove ```json
+            if cleaned_response.endswith("```"):
+                cleaned_response = cleaned_response[:-3]  # Remove ```
+            cleaned_response = cleaned_response.strip()
             
-    except Exception as e:
+            result = json.loads(cleaned_response)
+            label = result.get("email_type", "").lower()
+            
+            # Validate response
+            valid_labels = {"needs_reply", "schedule", "fyi", "spam"}
+            if label in valid_labels:
+                logger.info("Email classified as: %s", label)
+                return label
+            else:
+                logger.warning("Invalid classification '%s', defaulting to 'fyi'", label)
+                return "fyi"
+                
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning("Failed to parse JSON response: %s, raw response: %s", e, response_text)
+            # Fallback: try to extract category from text if JSON parsing fails
+            response_lower = response_text.lower()
+            if "needs_reply" in response_lower:
+                return "needs_reply"
+            elif "schedule" in response_lower:
+                return "schedule"
+            elif "spam" in response_lower:
+                return "spam"
+            else:
+                return "fyi"
+            
+    except (ValueError, RuntimeError, ConnectionError) as e:
         logger.error("Error classifying email: %s", e)
         # Fallback heuristic when model quota/exceptions happen
         text = f"{subject}\n{body}".lower()
@@ -58,10 +88,20 @@ Return ONLY the category name (needs_reply, schedule, fyi, or spam).
         needs_reply_keywords = [
             "please reply", "vui lòng", "trả lời", "confirm", "xác nhận",
             "yes/no", "phản hồi", "deadline", "by eod", "can you", "could you",
+            "có thể", "được không", "feedback", "ý kiến", "review", "kiểm tra",
             "?"
         ]
-        schedule_keywords = ["meet", "meeting", "schedule", "hẹn", "calendar", "call"]
-        spam_keywords = ["unsubscribe", "viagra", "crypto", "lottery", "win money"]
+        schedule_keywords = [
+            "meet", "meeting", "schedule", "hẹn", "calendar", "call",
+            "họp", "gặp", "lịch", "cuộc họp", "hẹn gặp", "lịch trình"
+        ]
+        spam_keywords = [
+            "unsubscribe", "viagra", "crypto", "lottery", "win money", "win $", 
+            "congratulations", "prize", "claim", "click here", "free money",
+            "urgent", "act now", "limited time", "guaranteed", "no risk",
+            "chúc mừng", "trúng thưởng", "nhận thưởng", "khuyến mãi", "giảm giá",
+            "đầu tư", "kiếm tiền", "không rủi ro", "cơ hội duy nhất"
+        ]
 
         if any(k in text for k in spam_keywords):
             return "spam"
@@ -106,6 +146,6 @@ Write your reply (without <reply></reply> tags):
             logger.warning("Empty reply generated")
             return "Thank you for your email. I will review it and get back to you soon."
             
-    except Exception as e:
+    except (ValueError, RuntimeError, ConnectionError) as e:
         logger.error("Error generating reply: %s", e)
         return "Thank you for your email. I will review it and get back to you soon."

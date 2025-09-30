@@ -131,7 +131,17 @@ async def run_email(item: RunEmailRequest):
 @app.get("/pending")
 def pending():
     # lightweight queue for HITL UI
-    return [{"thread_id":k,"payload":v["value"]} for k,v in PENDING.items()]
+    return [
+        {
+            "thread_id": k,
+            "payload": v.get("value"),
+            # surface metadata for clean client-side filtering
+            "triage": v.get("triage"),
+            "priority": v.get("priority"),
+            "is_vip": v.get("is_vip", False)
+        }
+        for k, v in PENDING.items()
+    ]
 
 @app.post("/approve")
 async def approve(req: Request, body: ApproveRequest):

@@ -43,9 +43,13 @@ Edit `.env` file:
 GOOGLE_GENERATIVE_AI_API_KEY=your_gemini_api_key_here
 HITL_SECRET=your_secure_hitl_secret_here
 
-# Optional
+# Optional - Email Processing
 LABELS_TO_WATCH=INBOX,IMPORTANT
-POLL_INTERVAL_SECONDS=45
+POLL_INTERVAL_SECONDS=15
+MAX_EMAILS_PER_BATCH=20
+ENABLE_EMAIL_FILTERING=true
+
+# Database
 DB_PATH=./data/memory.sqlite
 ```
 
