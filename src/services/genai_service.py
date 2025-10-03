@@ -1,3 +1,20 @@
+"""
+GenAI Service - Google Gemini AI Integration
+===========================================
+
+Service này cung cấp các chức năng AI:
+- Email classification (needs_reply, schedule, fyi, spam)
+- Draft reply generation với context awareness
+- VIP contact recognition
+- Fallback heuristics khi AI fails
+
+Architecture:
+- Sử dụng Google Gemini 2.5 Flash model
+- Prompt engineering cho classification và generation
+- Error handling với fallback rules
+- Caching client instance
+"""
+
 from google import genai
 import os
 import json
@@ -8,10 +25,24 @@ from typing import List
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MODEL = "gemini-2.5-flash"  # Updated to latest model
+# Gemini model configuration
+MODEL = "gemini-2.5-flash"  # Latest model với tốc độ cao
 
+# Client caching
 _client = None
+
 def get_client():
+    """
+    Lấy hoặc tạo Gemini AI client instance
+    
+    Sử dụng singleton pattern để cache client và tránh tạo lại
+    
+    Returns:
+        genai.Client instance
+        
+    Raises:
+        ValueError: Nếu không có API key
+    """
     global _client
     if _client is None:
         api_key = os.environ.get("GOOGLE_GENERATIVE_AI_API_KEY")
@@ -21,8 +52,25 @@ def get_client():
     return _client
 
 def classify_email(subject: str, body: str, sender: str = "") -> str:
-    """Classify email into needs_reply, schedule, fyi, or spam"""
+    """
+    Phân loại email thành các category: needs_reply, schedule, fyi, spam
+    
+    Workflow:
+    1. Tạo prompt cho Gemini AI với email details
+    2. Parse JSON response từ AI
+    3. Validate response format
+    4. Fallback sang heuristic rules nếu AI fails
+    
+    Args:
+        subject: Tiêu đề email
+        body: Nội dung email
+        sender: Địa chỉ người gửi (optional)
+        
+    Returns:
+        String classification: "needs_reply", "schedule", "fyi", hoặc "spam"
+    """
     try:
+        # Tạo prompt cho AI classification
         prompt = f"""
 You are an email triage expert. Analyze the email and classify it strictly into one of these categories:
 
@@ -42,12 +90,13 @@ Return ONLY a JSON object with the email_type field:
 }}
 """.strip()
         
+        # Gọi Gemini AI
         resp = get_client().models.generate_content(model=MODEL, contents=prompt)
         response_text = (resp.text or "").strip()
         
         # Parse JSON response - handle markdown code blocks
         try:
-            # Remove markdown code block markers if present
+            # Remove markdown code block markers nếu có
             cleaned_response = response_text.strip()
             if cleaned_response.startswith("```json"):
                 cleaned_response = cleaned_response[7:]  # Remove ```json
@@ -69,7 +118,7 @@ Return ONLY a JSON object with the email_type field:
                 
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning("Failed to parse JSON response: %s, raw response: %s", e, response_text)
-            # Fallback: try to extract category from text if JSON parsing fails
+            # Fallback: try to extract category from text nếu JSON parsing fails
             response_lower = response_text.lower()
             if "needs_reply" in response_lower:
                 return "needs_reply"
@@ -82,9 +131,10 @@ Return ONLY a JSON object with the email_type field:
             
     except (ValueError, RuntimeError, ConnectionError) as e:
         logger.error("Error classifying email: %s", e)
-        # Fallback heuristic when model quota/exceptions happen
+        # Fallback heuristic khi model quota/exceptions xảy ra
         text = f"{subject}\n{body}".lower()
-        # Very simple rules to still surface actionable emails
+        
+        # Simple rules để vẫn surface actionable emails
         needs_reply_keywords = [
             "please reply", "vui lòng", "trả lời", "confirm", "xác nhận",
             "yes/no", "phản hồi", "deadline", "by eod", "can you", "could you",
@@ -103,6 +153,7 @@ Return ONLY a JSON object with the email_type field:
             "đầu tư", "kiếm tiền", "không rủi ro", "cơ hội duy nhất"
         ]
 
+        # Apply heuristic rules
         if any(k in text for k in spam_keywords):
             return "spam"
         if any(k in text for k in schedule_keywords):
@@ -112,12 +163,33 @@ Return ONLY a JSON object with the email_type field:
         return "fyi"
 
 def draft_reply(subject: str, body: str, tone: str, pref_hours: str, sender: str = "", vip_contacts: List[str] = None) -> str:
-    """Generate a contextual reply draft using Gemini"""
+    """
+    Tạo draft reply email sử dụng Gemini AI
+    
+    Workflow:
+    1. Kiểm tra VIP status của sender
+    2. Tạo prompt với context và preferences
+    3. Gọi Gemini AI để generate reply
+    4. Fallback sang generic reply nếu AI fails
+    
+    Args:
+        subject: Tiêu đề email gốc
+        body: Nội dung email gốc
+        tone: Tone preference của user (e.g., "polite, concise")
+        pref_hours: Preferred meeting hours
+        sender: Địa chỉ người gửi
+        vip_contacts: List VIP contacts (optional)
+        
+    Returns:
+        Generated reply text, hoặc fallback message
+    """
     try:
+        # Kiểm tra VIP status
         vip_context = ""
         if vip_contacts and sender in vip_contacts:
             vip_context = " (This is a VIP contact - be extra professional and responsive)"
         
+        # Tạo prompt cho AI
         prompt = f"""
 You are a professional email assistant. Write a concise, contextual reply to this email.
 
@@ -136,6 +208,7 @@ Body: {body[:800]}...
 Write your reply (without <reply></reply> tags):
 """.strip()
         
+        # Gọi Gemini AI
         resp = get_client().models.generate_content(model=MODEL, contents=prompt)
         reply = resp.text or ""
         

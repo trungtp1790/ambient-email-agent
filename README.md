@@ -4,137 +4,104 @@ An intelligent email assistant that runs in the background, automatically triage
 
 ## ✨ Features
 
-### 🧠 AI-Powered Email Processing
-- **Smart Triage**: Automatically classifies emails into `needs_reply`, `schedule`, `fyi`, or `spam`
-- **Contextual Drafts**: Generates personalized replies using Gemini AI with user preferences
-- **VIP Recognition**: Special handling for important contacts with priority processing
-- **Memory System**: Learns from user preferences and email patterns
-
-### 🔄 Human-in-the-Loop (HITL)
-- **Approval Workflow**: Pauses before sending emails for human review
-- **Edit Capability**: Modify drafts before sending
-- **Real-time Dashboard**: Modern web interface for managing pending actions
-- **Bulk Operations**: Handle multiple emails efficiently
-
-### 🛡️ Enterprise-Ready
-- **Free-tier Friendly**: Uses polling instead of webhooks to stay within free limits
-- **Comprehensive Logging**: Full audit trail of all actions
-- **Error Handling**: Robust error recovery and notification system
+- **🧠 AI-Powered**: Smart email classification (needs_reply, schedule, fyi, spam) and contextual draft generation
+- **🔄 HITL Workflow**: Human approval for sensitive actions with edit capabilities
+- **👑 VIP Recognition**: Special handling for important contacts with priority processing
+- **💾 Memory Learning**: Learns from user preferences and email patterns
+- **🛡️ Enterprise-Ready**: Free-tier friendly, comprehensive logging, robust error handling
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 - Python 3.11+
-- Docker & Docker Compose
 - Gmail API credentials
 - Gemini API key
 
-### 1. Clone and Setup
+### Setup
 ```bash
+# 1. Clone and install
 git clone https://github.com/trungtp1790/ambient-email-agent.git
 cd ambient-email-agent
-cp .env.example .env
-```
-
-### 2. Configure Environment
-Edit `.env` file:
-```env
-# Required
-GOOGLE_GENERATIVE_AI_API_KEY=your_gemini_api_key_here
-HITL_SECRET=your_secure_hitl_secret_here
-
-# Optional - Email Processing
-LABELS_TO_WATCH=INBOX,IMPORTANT
-POLL_INTERVAL_SECONDS=15
-MAX_EMAILS_PER_BATCH=20
-ENABLE_EMAIL_FILTERING=true
-
-# Database
-DB_PATH=./data/memory.sqlite
-```
-
-### 3. Gmail API Setup
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing one
-3. Enable Gmail API
-4. Create credentials (OAuth 2.0 Client ID)
-5. Download credentials as `credentials.json`
-6. Place in `credentials/` folder
-
-### 4. Generate Gmail Token
-```bash
-# Install dependencies
 pip install -r requirements.txt
 
-# Generate token (opens browser for OAuth)
+# 2. Configure environment
+cp .env.example .env
+# Edit .env with your API keys
+
+# 3. Setup Gmail API
+# - Go to Google Cloud Console
+# - Enable Gmail API
+# - Create OAuth 2.0 credentials
+# - Download as credentials/credentials.json
+
+# 4. Generate Gmail token
 python -c "from src.services.gmail_service import bootstrap_token; bootstrap_token()"
+
+# 5. Run the system
+python start_dev.py
+# Or manually:
+# uvicorn src.app:app --reload --host 0.0.0.0 --port 8000
+# python -m src.ambient_loop
 ```
 
-### 5. Run Locally
-```bash
-# Start API server
-uvicorn src.app:app --reload --host 0.0.0.0 --port 8000
+## 🏗️ Architecture
 
-# In another terminal, start the background worker
-python -m src.ambient_loop
+### Core Components
+- **FastAPI Server**: REST API + web dashboard
+- **Background Worker**: Gmail polling + email processing
+- **LangGraph Pipeline**: AI-powered workflow (Triage → Agent → Sensitive)
+- **Services**: Gmail API, Gemini AI, SQLite storage
 
-# Access dashboard
-open http://localhost:8000
+### Data Flow
 ```
+Gmail API → Polling → Filtering → LangGraph → HITL Queue → User Approval → Send Email
+```
+
+### LangGraph Pipeline
+```
+Email Input → Triage → Agent → Sensitive → Output/Interrupt
+```
+
+- **Triage**: Classify email + check VIP status + set priority
+- **Agent**: Generate draft reply with user context
+- **Sensitive**: Create HITL payload + interrupt for approval
 
 ## 📁 Project Structure
 
 ```
-ambient-email-agent/
-├── README.md
-├── .env.example
-├── requirements.txt
-├── (Docker files removed)
-├── src/
-│   ├── app.py                 # FastAPI application
-│   ├── ambient_loop.py        # Background email polling worker
-│   ├── services/
-│   │   ├── genai_service.py   # Gemini AI integration
-│   │   ├── gmail_service.py   # Gmail API wrapper
-│   │   └── memory_store.py    # SQLite database operations
-│   ├── graph/
-│   │   ├── state.py           # LangGraph state definition
-│   │   ├── nodes.py           # Graph processing nodes
-│   │   └── build.py           # Graph construction
-│   └── web/
-│       ├── index.html         # HITL dashboard
-│       └── styles.css         # Modern UI styles
-├── credentials/               # Gmail API credentials
-├── data/                     # SQLite database
-└── token.json               # Gmail OAuth token
+src/
+├── app.py                 # FastAPI application
+├── ambient_loop.py        # Background worker
+├── services/
+│   ├── gmail_service.py   # Gmail API integration
+│   ├── genai_service.py   # Gemini AI integration
+│   └── memory_store.py    # SQLite database
+├── graph/
+│   ├── state.py           # LangGraph state definition
+│   ├── nodes.py           # Processing nodes
+│   └── build.py           # Graph construction
+└── web/
+    ├── index.html         # HITL dashboard
+    └── styles.css         # UI styles
 ```
 
 ## 🔧 Configuration
 
 ### Environment Variables
-
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GOOGLE_GENERATIVE_AI_API_KEY` | ✅ | - | Gemini API key from Google AI Studio |
-| `HITL_SECRET` | ✅ | - | Secret for HITL approval endpoint |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | ✅ | - | Gemini API key |
+| `HITL_SECRET` | ✅ | - | HITL approval secret |
 | `LABELS_TO_WATCH` | ❌ | `INBOX,IMPORTANT` | Gmail labels to monitor |
-| `POLL_INTERVAL_SECONDS` | ❌ | `45` | Email polling frequency |
-| `DB_PATH` | ❌ | `./data/memory.sqlite` | SQLite database path |
-| `LOG_LEVEL` | ❌ | `INFO` | Logging level |
-| `API_HOST` | ❌ | `0.0.0.0` | API server host |
-| `API_PORT` | ❌ | `8000` | API server port |
-| `DEBUG` | ❌ | `false` | Enable debug mode |
+| `POLL_INTERVAL_SECONDS` | ❌ | `15` | Polling frequency |
+| `DB_PATH` | ❌ | `./data/memory.sqlite` | Database path |
 
-### User Profile Configuration
-
-The system learns from your preferences stored in the database:
-
+### User Profile
 ```python
-# Example profile structure
 {
     "tone": "polite, concise, friendly",
     "preferred_meeting_hours": "Tue–Thu 09:00–11:30",
-    "vip_contacts": ["boss@company.com", "client@important.com"],
+    "vip_contacts": ["boss@company.com"],
     "auto_cc": ["assistant@company.com"]
 }
 ```
@@ -142,33 +109,31 @@ The system learns from your preferences stored in the database:
 ## 🎯 Usage
 
 ### Dashboard Features
-
-1. **Email Queue**: View all pending email actions
-2. **VIP Indicators**: Special badges for important contacts
-3. **Priority Filtering**: Sort by priority and status
-4. **Bulk Actions**: Approve, edit, or deny multiple emails
-5. **Real-time Updates**: Auto-refresh with configurable intervals
+- **Email Queue**: View pending approvals
+- **VIP Indicators**: Special badges for important contacts
+- **Priority Filtering**: Sort by priority and status
+- **Edit Capability**: Modify drafts before sending
+- **Real-time Updates**: Auto-refresh with configurable intervals
 
 ### API Endpoints
 
 #### `POST /run-email`
-Process a single email through the AI pipeline
+Process email through AI pipeline
 ```json
 {
     "user_id": "u_local",
     "email_id": "msg_123",
     "email_subject": "Meeting Request",
     "email_body": "Can we meet tomorrow?",
-    "email_sender": "colleague@company.com",
-    "email_recipient": "you@company.com"
+    "email_sender": "colleague@company.com"
 }
 ```
 
 #### `GET /pending`
-Get all pending email actions requiring approval
+Get all pending email actions
 
 #### `POST /approve`
-Approve, edit, or deny a pending action
+Approve, edit, or deny pending action
 ```json
 {
     "thread_id": "thread_123",
@@ -184,27 +149,16 @@ Approve, edit, or deny a pending action
 ## 🧠 AI Capabilities
 
 ### Email Classification
-The system uses Gemini AI to intelligently categorize emails:
-
 - **needs_reply**: Requires immediate response
 - **schedule**: Meeting requests, calendar invitations
 - **fyi**: Informational emails, no action needed
 - **spam**: Unsolicited or suspicious emails
 
 ### Draft Generation
-AI-generated replies consider:
-- User's communication tone preferences
-- VIP contact status for priority handling
-- Meeting time preferences
-- Context from original email
-- Professional relationship dynamics
+AI considers user tone preferences, VIP status, meeting hours, and email context.
 
 ### Memory Learning
-The system continuously learns from:
-- User approval patterns
-- Email response preferences
-- VIP contact interactions
-- Meeting scheduling habits
+System learns from approval patterns, response preferences, and VIP interactions.
 
 ## 🛠️ Development
 
@@ -239,38 +193,23 @@ upsert_profile("u_local", {"tone": "professional, concise"})
 # Test email processing
 curl -X POST http://localhost:8000/run-email \
   -H "Content-Type: application/json" \
-  -d '{
-    "user_id": "test_user",
-    "email_id": "test_123",
-    "email_subject": "Test Email",
-    "email_body": "This is a test email",
-    "email_sender": "test@example.com"
-  }'
+  -d '{"user_id": "test_user", "email_id": "test_123", "email_subject": "Test", "email_body": "Test email", "email_sender": "test@example.com"}'
 ```
 
 ## 🚀 Deployment
 
-### Cloud Deployment
+### Cloud Platforms
+- **Railway**: Connect repo + set env vars + deploy
+- **Render**: Web Service + build command + start command
+- **Fly.io**: `fly launch` + `fly deploy`
 
-#### Railway
-1. Connect GitHub repository
-2. Set environment variables
-3. Deploy automatically
-
-#### Render
-1. Create new Web Service
-2. Connect repository
-3. Set build command: `pip install -r requirements.txt`
-4. Set start command: `uvicorn src.app:app --host 0.0.0.0 --port $PORT`
-
-#### Fly.io
+### Production Setup
 ```bash
-# Install flyctl
-curl -L https://fly.io/install.sh | sh
+# Build command
+pip install -r requirements.txt
 
-# Deploy
-fly launch
-fly deploy
+# Start command
+uvicorn src.app:app --host 0.0.0.0 --port $PORT
 ```
 
 ## 🔒 Security
@@ -283,14 +222,16 @@ fly deploy
 
 ## 📊 Monitoring
 
-### Logs
-Use your process manager or run services in foreground during development.
+### Real-time Features
+- Email queue with live updates
+- Processing statistics
+- VIP indicators
+- Error tracking
 
-### Metrics
-- Email processing rate
-- AI classification accuracy
-- User approval patterns
-- System performance metrics
+### Health Checks
+- `GET /health` for API status
+- Database connectivity monitoring
+- External API health checks
 
 ## 🤝 Contributing
 
@@ -302,7 +243,7 @@ Use your process manager or run services in foreground during development.
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
@@ -314,7 +255,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📞 Support
 
 - 📧 Email: ambient-email-agent@gmail.com
-- 📖 Documentation: [Full docs](https://docs.example.com)
 - 🐛 Issues: [GitHub Issues](https://github.com/trungtp1790/ambient-email-agent/issues)
 
 ---

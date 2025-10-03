@@ -1,3 +1,20 @@
+"""
+Memory Store - SQLite Database Operations
+========================================
+
+Service này quản lý persistent storage cho:
+- User profiles và preferences
+- VIP contacts management
+- Email processing history
+- Statistics và analytics
+
+Architecture:
+- SQLite database với SQLAlchemy ORM
+- JSON storage cho flexible profile data
+- CRUD operations cho tất cả entities
+- Error handling và logging
+"""
+
 from sqlalchemy import create_engine, text
 import os, json, logging
 from typing import Dict, List, Optional
@@ -7,10 +24,21 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# SQLite database engine
 engine = create_engine(f"sqlite:///{os.getenv('DB_PATH','./data/memory.sqlite')}", future=True)
 
 def init_db():
+    """
+    Khởi tạo database schema với các bảng cần thiết
+    
+    Tạo các bảng:
+    - profile: User profiles với JSON data
+    - prefs: User preferences (unused trong current implementation)
+    - email_history: Lịch sử xử lý email
+    - vip_contacts: Danh sách VIP contacts
+    """
     with engine.begin() as conn:
+        # User profiles table
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS profile(
             user_id TEXT PRIMARY KEY,
@@ -18,6 +46,8 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );"""))
+        
+        # User preferences table (unused trong current implementation)
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS prefs(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,6 +57,8 @@ def init_db():
             value TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );"""))
+        
+        # Email processing history
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS email_history(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +70,8 @@ def init_db():
             action_taken TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );"""))
+        
+        # VIP contacts management
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS vip_contacts(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,6 +85,15 @@ def init_db():
         );"""))
 
 def get_profile(user_id: str):
+    """
+    Lấy user profile từ database
+    
+    Args:
+        user_id: ID của user
+        
+    Returns:
+        Dict chứa profile data, hoặc default profile nếu chưa có
+    """
     with engine.begin() as conn:
         row = conn.execute(text("SELECT data FROM profile WHERE user_id=:u"), {"u": user_id}).fetchone()
         if row:
@@ -58,6 +101,7 @@ def get_profile(user_id: str):
                 return json.loads(row[0])
             except Exception:
                 pass
+        # Return default profile nếu chưa có
         return {
             "tone": "polite, concise, friendly",
             "preferred_meeting_hours": "Tue–Thu 09:00–11:30",
@@ -66,6 +110,16 @@ def get_profile(user_id: str):
         }
 
 def upsert_profile(user_id: str, patch: dict):
+    """
+    Update hoặc tạo user profile
+    
+    Args:
+        user_id: ID của user
+        patch: Dict chứa các fields cần update
+        
+    Returns:
+        Updated profile dict
+    """
     prof = get_profile(user_id)
     prof.update(patch)
     with engine.begin() as conn:
@@ -77,7 +131,19 @@ def upsert_profile(user_id: str, patch: dict):
     return prof
 
 def add_vip_contact(user_id: str, email: str, name: str = "", priority: int = 1, notes: str = ""):
-    """Add or update a VIP contact"""
+    """
+    Thêm hoặc update VIP contact
+    
+    Args:
+        user_id: ID của user
+        email: Email address của VIP contact
+        name: Tên của VIP contact (optional)
+        priority: Độ ưu tiên (1=normal, 2=high)
+        notes: Ghi chú (optional)
+        
+    Returns:
+        True nếu thành công, False nếu có lỗi
+    """
     try:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -93,7 +159,15 @@ def add_vip_contact(user_id: str, email: str, name: str = "", priority: int = 1,
         return False
 
 def get_vip_contacts(user_id: str) -> List[Dict]:
-    """Get all VIP contacts for a user"""
+    """
+    Lấy tất cả VIP contacts của user
+    
+    Args:
+        user_id: ID của user
+        
+    Returns:
+        List các VIP contact dicts, sorted by priority
+    """
     try:
         with engine.begin() as conn:
             rows = conn.execute(text("""
@@ -106,7 +180,16 @@ def get_vip_contacts(user_id: str) -> List[Dict]:
         return []
 
 def is_vip_contact(user_id: str, email: str) -> bool:
-    """Check if an email is a VIP contact"""
+    """
+    Kiểm tra xem email có phải VIP contact không
+    
+    Args:
+        user_id: ID của user
+        email: Email address cần kiểm tra
+        
+    Returns:
+        True nếu là VIP contact, False nếu không
+    """
     try:
         with engine.begin() as conn:
             row = conn.execute(text("""
@@ -118,7 +201,17 @@ def is_vip_contact(user_id: str, email: str) -> bool:
         return False
 
 def log_email_action(user_id: str, email_id: str, sender: str, subject: str, triage_result: str, action_taken: str):
-    """Log email processing action"""
+    """
+    Log email processing action vào history
+    
+    Args:
+        user_id: ID của user
+        email_id: ID của email
+        sender: Địa chỉ người gửi
+        subject: Tiêu đề email
+        triage_result: Kết quả phân loại
+        action_taken: Hành động đã thực hiện
+    """
     try:
         with engine.begin() as conn:
             conn.execute(text("""
@@ -130,10 +223,19 @@ def log_email_action(user_id: str, email_id: str, sender: str, subject: str, tri
         logger.error(f"Error logging email action: {e}")
 
 def get_email_stats(user_id: str, days: int = 7) -> Dict:
-    """Get email processing statistics"""
+    """
+    Lấy thống kê xử lý email
+    
+    Args:
+        user_id: ID của user
+        days: Số ngày để lấy thống kê (default: 7)
+        
+    Returns:
+        Dict chứa triage distribution và action distribution
+    """
     try:
         with engine.begin() as conn:
-            # Get triage distribution
+            # Lấy triage distribution
             triage_stats = conn.execute(text("""
             SELECT triage_result, COUNT(*) as count 
             FROM email_history 
@@ -141,7 +243,7 @@ def get_email_stats(user_id: str, days: int = 7) -> Dict:
             GROUP BY triage_result
             """.format(days)), {"u": user_id}).fetchall()
             
-            # Get action distribution
+            # Lấy action distribution
             action_stats = conn.execute(text("""
             SELECT action_taken, COUNT(*) as count 
             FROM email_history 

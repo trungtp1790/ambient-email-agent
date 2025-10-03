@@ -1,3 +1,19 @@
+"""
+LangGraph Processing Nodes
+=========================
+
+Các nodes xử lý trong LangGraph workflow:
+1. node_triage: Phân loại email và xác định priority
+2. node_agent: Generate draft reply sử dụng AI
+3. node_sensitive: Handle HITL approval cho sensitive actions
+
+Architecture:
+- Mỗi node nhận EmailState và trả về updated state
+- Error handling với fallback values
+- Logging cho debugging và monitoring
+- Interrupt mechanism cho HITL workflow
+"""
+
 from langgraph.types import interrupt
 from src.graph.state import EmailState
 from src.services.genai_service import classify_email, draft_reply
@@ -9,21 +25,36 @@ import logging
 logger = logging.getLogger(__name__)
 
 def node_triage(state: EmailState) -> EmailState:
-    """Classify email and determine priority based on sender"""
+    """
+    Phân loại email và xác định priority dựa trên sender
+    
+    Workflow:
+    1. Extract sender email từ header
+    2. Kiểm tra VIP status
+    3. Classify email sử dụng AI
+    4. Xác định proposed action
+    5. Log triage action
+    
+    Args:
+        state: EmailState chứa email information
+        
+    Returns:
+        Updated EmailState với triage, priority, is_vip, proposed_action
+    """
     try:
         sender = state.get("email_sender", "")
         sender_email = extract_sender_email(sender)
         
-        # Check if sender is VIP
+        # Kiểm tra VIP status
         is_vip = is_vip_contact(state["user_id"], sender_email)
         state["is_vip"] = is_vip
         state["priority"] = 2 if is_vip else 1
         
-        # Classify email with sender context
+        # Classify email với sender context
         label = classify_email(state["email_subject"], state["email_body"], sender)
         state["triage"] = label
         
-        # Determine action based on classification
+        # Xác định action dựa trên classification
         if label == "needs_reply":
             state["proposed_action"] = "send_email"
         elif label == "schedule":
@@ -31,7 +62,7 @@ def node_triage(state: EmailState) -> EmailState:
         else:
             state["proposed_action"] = "none"
             
-        # Log the triage action
+        # Log triage action
         log_email_action(
             state["user_id"], 
             state["email_id"], 
@@ -46,6 +77,7 @@ def node_triage(state: EmailState) -> EmailState:
         
     except Exception as e:
         logger.error("Error in triage node: %s", e)
+        # Fallback values khi có lỗi
         state["triage"] = "fyi"
         state["proposed_action"] = "none"
         state["is_vip"] = False
@@ -53,13 +85,29 @@ def node_triage(state: EmailState) -> EmailState:
         return state
 
 def node_agent(state: EmailState) -> EmailState:
-    """Generate draft reply using AI with VIP context"""
+    """
+    Generate draft reply sử dụng AI với VIP context
+    
+    Workflow:
+    1. Kiểm tra nếu email cần reply (needs_reply)
+    2. Lấy user profile và VIP contacts
+    3. Generate draft reply với context
+    4. Log draft generation action
+    
+    Args:
+        state: EmailState với triage information
+        
+    Returns:
+        Updated EmailState với draft content
+    """
     try:
         if state.get("triage") == "needs_reply":
+            # Lấy user profile và VIP contacts
             prof = get_profile(state["user_id"])
             vip_contacts = get_vip_contacts(state["user_id"])
             vip_emails = [contact["email"] for contact in vip_contacts]
             
+            # Generate draft reply với context
             state["draft"] = draft_reply(
                 state["email_subject"], 
                 state["email_body"],
@@ -69,7 +117,7 @@ def node_agent(state: EmailState) -> EmailState:
                 vip_contacts=vip_emails
             )
             
-            # Log the draft generation
+            # Log draft generation action
             log_email_action(
                 state["user_id"], 
                 state["email_id"], 
@@ -91,15 +139,30 @@ def node_agent(state: EmailState) -> EmailState:
         return state
 
 def node_sensitive(state: EmailState) -> EmailState:
-    """Handle sensitive actions with human-in-the-loop approval.
-
-    IMPORTANT: Do not swallow the Interrupt exception. It must bubble up so the
-    runtime can pause and our API can capture the interrupt payload.
+    """
+    Handle sensitive actions với human-in-the-loop approval
+    
+    Workflow:
+    1. Kiểm tra nếu có proposed action là send_email và có draft
+    2. Tạo HITL payload với proposal details
+    3. Log awaiting_approval action
+    4. Stash payload cho API-side HITL queue
+    5. Raise interrupt để pause workflow
+    
+    IMPORTANT: Không được catch Interrupt exception. Nó phải bubble up
+    để runtime có thể pause và API capture interrupt payload.
+    
+    Args:
+        state: EmailState với proposed_action và draft
+        
+    Returns:
+        Updated EmailState (nếu không có interrupt)
     """
     if state.get("proposed_action") == "send_email" and state.get("draft"):
         sender = state.get("email_sender", "")
         sender_email = extract_sender_email(sender)
 
+        # Tạo HITL payload
         payload = {
             "tool": "send_email",
             "allow_edit": True,
@@ -117,7 +180,7 @@ def node_sensitive(state: EmailState) -> EmailState:
             }
         }
 
-        # Log and raise interrupt for HITL
+        # Log và raise interrupt cho HITL
         log_email_action(
             state["user_id"],
             state["email_id"],
@@ -127,7 +190,7 @@ def node_sensitive(state: EmailState) -> EmailState:
             "awaiting_approval"
         )
 
-        # Stash payload for API-side HITL queue (robust even if interrupt stream isn't captured)
+        # Stash payload cho API-side HITL queue (robust ngay cả khi interrupt stream không được capture)
         state["hitl_payload"] = payload
         state["hitl_thread_id"] = f"{state['email_id']}-{uuid.uuid4().hex[:8]}"
 
